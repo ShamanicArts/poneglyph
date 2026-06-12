@@ -335,3 +335,74 @@ fn handle_files_key(app: &mut App, key: KeyEvent) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    fn key(raw: &str) -> KeyEvent {
+        parse_script_key(raw).unwrap()
+    }
+
+    fn replay(app: &mut App, keys: &[&str]) {
+        for raw in keys {
+            handle_key(app, key(raw)).unwrap();
+        }
+    }
+
+    #[test]
+    fn leader_edit_type_escape_returns_to_preview_without_leaking_command_chars() {
+        let mut app = App::new(None).unwrap();
+        app.content = "abc".into();
+        replay(&mut app, &["ctrl+x", "e", "H", "i", "esc"]);
+        assert_eq!(app.mode, ViewMode::Preview);
+        assert_eq!(app.content, "Hiabc");
+        assert!(!app.leader);
+        assert!(!app.content.contains("xe"));
+    }
+
+    #[test]
+    fn quit_commands_work_from_preview_and_edit_modes() {
+        let mut preview = App::new(None).unwrap();
+        replay(&mut preview, &["ctrl+q"]);
+        assert!(preview.should_quit);
+
+        let mut edit = App::new(None).unwrap();
+        replay(&mut edit, &["ctrl+x", "e", "ctrl+x", "q"]);
+        assert!(edit.should_quit);
+    }
+
+    #[test]
+    fn global_undo_redo_work_while_in_preview() {
+        let mut app = App::new(None).unwrap();
+        app.content = "abc".into();
+        replay(&mut app, &["ctrl+x", "e", "d", "esc", "ctrl+z"]);
+        assert_eq!(app.content, "abc");
+        replay(&mut app, &["ctrl+y"]);
+        assert_eq!(app.content, "dabc");
+    }
+
+    #[test]
+    fn files_focus_escape_returns_to_editor_focus() {
+        let mut app = App::new(None).unwrap();
+        replay(&mut app, &["ctrl+x", "f"]);
+        assert_eq!(app.focus, FocusPane::Files);
+        replay(&mut app, &["esc"]);
+        assert_eq!(app.focus, FocusPane::Editor);
+    }
+
+    #[test]
+    fn ctrl_s_saves_from_edit_mode() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "md-editor-rust-save-test-{}.md",
+            std::process::id()
+        ));
+        std::fs::write(&path, "abc").unwrap();
+        let mut app = App::new(Some(path.clone())).unwrap();
+        replay(&mut app, &["ctrl+x", "e", "Z", "ctrl+s"]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Zabc");
+        assert!(!app.modified);
+        let _ = std::fs::remove_file(path);
+    }
+}
