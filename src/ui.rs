@@ -140,6 +140,7 @@ fn draw_preview(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         &app.content,
         app.preview_scroll,
         area.height.saturating_sub(2) as usize,
+        area.width.saturating_sub(4) as usize,
         theme,
     );
     let p = Paragraph::new(lines)

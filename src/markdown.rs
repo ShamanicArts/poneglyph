@@ -3,6 +3,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use serde::Serialize;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::theme::Theme;
 
@@ -219,12 +220,13 @@ fn ordered(line: &str) -> bool {
         && s.as_bytes().get(dot + 1) == Some(&b' ')
 }
 
-pub fn render_preview_document<'a>(
-    content: &'a str,
+pub fn render_preview_document(
+    content: &str,
     scroll: usize,
     take: usize,
+    width: usize,
     theme: &Theme,
-) -> Vec<Line<'a>> {
+) -> Vec<Line<'static>> {
     let mut in_code = false;
     let mut rendered = Vec::new();
     for raw in content.split('\n') {
@@ -272,10 +274,15 @@ pub fn render_preview_document<'a>(
             rendered.push(render_preview_line(raw, theme));
         }
     }
-    rendered.into_iter().skip(scroll).take(take).collect()
+    rendered
+        .into_iter()
+        .flat_map(|line| wrap_styled_line(line, width.max(1)))
+        .skip(scroll)
+        .take(take)
+        .collect()
 }
 
-pub fn render_preview_line<'a>(raw: &'a str, theme: &Theme) -> Line<'a> {
+pub fn render_preview_line(raw: &str, theme: &Theme) -> Line<'static> {
     if let Some((level, title)) = heading(raw) {
         let color = match level {
             1 => theme.heading1,
@@ -346,17 +353,83 @@ pub fn render_preview_line<'a>(raw: &'a str, theme: &Theme) -> Line<'a> {
     render_inline(raw, theme)
 }
 
-pub fn render_editor_line<'a>(raw: &'a str, theme: &Theme) -> Line<'a> {
+pub fn render_editor_line(raw: &str, theme: &Theme) -> Line<'static> {
     render_preview_line(raw, theme)
 }
 
-fn render_inline<'a>(raw: &'a str, theme: &Theme) -> Line<'a> {
+fn render_inline(raw: &str, theme: &Theme) -> Line<'static> {
     let spans = render_inline_spans(raw, theme, Style::default().fg(theme.text));
     if spans.is_empty() {
         Line::from("")
     } else {
         Line::from(spans)
     }
+}
+
+fn wrap_styled_line(line: Line<'static>, width: usize) -> Vec<Line<'static>> {
+    let plain = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    if plain.width() <= width || plain.is_empty() {
+        return vec![line];
+    }
+
+    let continuation = continuation_prefix(&plain);
+    let continuation_width = continuation.width();
+    let indent_style = Style::default();
+    let mut rows = Vec::new();
+    let mut current: Vec<Span<'static>> = Vec::new();
+    let mut current_width = 0usize;
+    let mut first_row = true;
+
+    for span in line.spans {
+        let style = span.style;
+        for ch in span.content.chars() {
+            let ch_width = ch.width().unwrap_or(0).max(1);
+            let limit = if first_row {
+                width
+            } else {
+                width.saturating_sub(continuation_width).max(1)
+            };
+            if current_width > 0 && current_width + ch_width > limit {
+                rows.push(Line::from(current));
+                first_row = false;
+                current = if continuation.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![Span::styled(continuation.clone(), indent_style)]
+                };
+                current_width = continuation_width;
+            }
+            current.push(Span::styled(ch.to_string(), style));
+            current_width += ch_width;
+        }
+    }
+    rows.push(Line::from(current));
+    rows
+}
+
+fn continuation_prefix(plain: &str) -> String {
+    let trimmed = plain.trim_start();
+    let leading = plain.len().saturating_sub(trimmed.len());
+    if trimmed.starts_with('▌') {
+        return " ".repeat(leading + 2);
+    }
+    if trimmed.starts_with('#') {
+        let marker_len = trimmed.chars().take_while(|c| *c == '#').count() + 1;
+        return " ".repeat(leading + marker_len);
+    }
+    if matches!(trimmed.as_bytes(), [b'-' | b'*' | b'+', b' ', ..]) {
+        return " ".repeat(leading + 2);
+    }
+    if let Some(dot) = trimmed.find(". ") {
+        if dot > 0 && trimmed[..dot].chars().all(|c| c.is_ascii_digit()) {
+            return " ".repeat(leading + dot + 2);
+        }
+    }
+    String::new()
 }
 
 fn render_inline_spans(raw: &str, theme: &Theme, default_style: Style) -> Vec<Span<'static>> {
@@ -550,6 +623,29 @@ mod tests {
         assert_eq!(heading("#NoSpace"), Some((1, "NoSpace")));
         assert_eq!(heading("###### Six"), Some((6, "Six")));
         assert_eq!(heading("####### Seven"), Some((6, "# Seven")));
+    }
+
+    #[test]
+    fn wraps_preview_rows_with_markdown_continuation_indent() {
+        let theme = Theme::slate();
+        let rows = render_preview_document(
+            "- this is a very long list item that should wrap with indentation",
+            0,
+            10,
+            24,
+            &theme,
+        );
+        let plain: Vec<String> = rows
+            .into_iter()
+            .map(|line| {
+                line.spans
+                    .into_iter()
+                    .map(|s| s.content.to_string())
+                    .collect()
+            })
+            .collect();
+        assert!(plain.len() > 1);
+        assert!(plain[1].starts_with("  "));
     }
 
     #[test]
