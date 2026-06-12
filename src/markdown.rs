@@ -285,28 +285,37 @@ pub fn render_preview_line<'a>(raw: &'a str, theme: &Theme) -> Line<'a> {
             5 => theme.heading5,
             _ => theme.heading6,
         };
-        return Line::from(vec![
-            Span::styled(
-                format!("{} ", "#".repeat(level as usize)),
-                Style::default().fg(theme.heading_marker),
-            ),
-            Span::styled(
-                title.to_string(),
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ),
-        ]);
+        let mut spans = vec![Span::styled(
+            format!("{} ", "#".repeat(level as usize)),
+            Style::default().fg(theme.heading_marker),
+        )];
+        spans.extend(render_inline_spans(
+            title,
+            theme,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+        return Line::from(spans);
     }
     let trimmed = raw.trim_start();
     if trimmed.starts_with('>') {
-        return Line::from(vec![
-            Span::styled("▌ ", Style::default().fg(theme.quote_marker)),
+        let indent_len = raw.len().saturating_sub(trimmed.len());
+        let quote_markers = trimmed.chars().take_while(|c| *c == '>').count().max(1);
+        let content = trimmed[quote_markers..].trim_start();
+        let mut spans = vec![
+            Span::raw(" ".repeat(indent_len)),
             Span::styled(
-                trimmed.trim_start_matches('>').trim().to_string(),
-                Style::default()
-                    .fg(theme.quote)
-                    .add_modifier(Modifier::ITALIC),
+                format!("{} ", "▌".repeat(quote_markers)),
+                Style::default().fg(theme.quote_marker),
             ),
-        ]);
+        ];
+        spans.extend(render_inline_spans(
+            content,
+            theme,
+            Style::default()
+                .fg(theme.quote)
+                .add_modifier(Modifier::ITALIC),
+        ));
+        return Line::from(spans);
     }
     if is_hr(trimmed) {
         return Line::from(Span::styled(
@@ -317,10 +326,16 @@ pub fn render_preview_line<'a>(raw: &'a str, theme: &Theme) -> Line<'a> {
     if unordered(raw) || ordered(raw) {
         let prefix_len = raw.find(' ').map(|i| i + 1).unwrap_or(0);
         let (prefix, rest) = raw.split_at(prefix_len.min(raw.len()));
-        return Line::from(vec![
-            Span::styled(prefix.to_string(), Style::default().fg(theme.warn)),
-            Span::raw(rest.to_string()),
-        ]);
+        let mut spans = vec![Span::styled(
+            prefix.to_string(),
+            Style::default().fg(theme.warn),
+        )];
+        spans.extend(render_inline_spans(
+            rest,
+            theme,
+            Style::default().fg(theme.text),
+        ));
+        return Line::from(spans);
     }
     if raw.starts_with("```") {
         return Line::from(Span::styled(
@@ -336,10 +351,19 @@ pub fn render_editor_line<'a>(raw: &'a str, theme: &Theme) -> Line<'a> {
 }
 
 fn render_inline<'a>(raw: &'a str, theme: &Theme) -> Line<'a> {
-    let spans: Vec<Span> = tokenize_inline(raw)
+    let spans = render_inline_spans(raw, theme, Style::default().fg(theme.text));
+    if spans.is_empty() {
+        Line::from("")
+    } else {
+        Line::from(spans)
+    }
+}
+
+fn render_inline_spans(raw: &str, theme: &Theme, default_style: Style) -> Vec<Span<'static>> {
+    tokenize_inline(raw)
         .into_iter()
         .map(|seg| match seg.kind {
-            InlineKind::Text => Span::styled(seg.text, Style::default().fg(theme.text)),
+            InlineKind::Text => Span::styled(seg.text, default_style),
             InlineKind::Image => Span::styled(
                 format!("![{}]", seg.text),
                 Style::default()
@@ -378,12 +402,7 @@ fn render_inline<'a>(raw: &'a str, theme: &Theme) -> Line<'a> {
                     .add_modifier(Modifier::CROSSED_OUT),
             ),
         })
-        .collect();
-    if spans.is_empty() {
-        Line::from("")
-    } else {
-        Line::from(spans)
-    }
+        .collect()
 }
 
 pub fn tokenize_inline(text: &str) -> Vec<InlineSegment> {
