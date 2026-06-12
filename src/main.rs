@@ -223,6 +223,8 @@ fn parse_script_key(raw: &str) -> Result<KeyEvent> {
         "right" => KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
         "pageup" | "pgup" => KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
         "pagedown" | "pgdn" => KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        "home" => KeyEvent::new(KeyCode::Home, KeyModifiers::NONE),
+        "end" => KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
         "ctrl+x" | "c-x" | "^x" => KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
         "ctrl+q" | "c-q" | "^q" => KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL),
         "ctrl+s" | "c-s" | "^s" => KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
@@ -283,6 +285,9 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
     if matches!(app.focus, FocusPane::Files) {
         return handle_files_key(app, key);
     }
+    if matches!(app.focus, FocusPane::Outline) {
+        return handle_outline_key(app, key);
+    }
 
     match app.mode {
         ViewMode::Preview => handle_preview_key(app, key),
@@ -308,6 +313,10 @@ fn handle_edit_key(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Down => app.move_cursor(1, 0),
         KeyCode::Left => app.move_cursor(0, -1),
         KeyCode::Right => app.move_cursor(0, 1),
+        KeyCode::Home => app.line_home(),
+        KeyCode::End => app.line_end(),
+        KeyCode::PageUp => app.move_page(-1),
+        KeyCode::PageDown => app.move_page(1),
         KeyCode::Esc => {
             app.mode = ViewMode::Preview;
             app.status = "View: preview".into();
@@ -321,6 +330,22 @@ fn handle_edit_key(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char(ch) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
             app.insert_char(ch)
         }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn handle_outline_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    let len = app.outline().len().max(1);
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.selected_outline = app.selected_outline.saturating_sub(1)
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.selected_outline = (app.selected_outline + 1).min(len - 1)
+        }
+        KeyCode::Enter | KeyCode::Right => app.jump_to_selected_outline(),
+        KeyCode::Esc | KeyCode::Left => app.focus = FocusPane::Editor,
         _ => {}
     }
     Ok(())
@@ -402,6 +427,17 @@ mod input_tests {
     }
 
     #[test]
+    fn outline_focus_can_jump_to_heading() {
+        let mut app = App::new(None).unwrap();
+        app.content = "# A\nbody\n## B\ntext".into();
+        replay(&mut app, &["ctrl+x", "o", "down", "enter"]);
+        assert_eq!(app.focus, FocusPane::Editor);
+        assert_eq!(app.cursor_line, 2);
+        assert_eq!(app.preview_scroll, 0);
+        assert_eq!(app.status, "Jumped to B");
+    }
+
+    #[test]
     fn ctrl_s_saves_from_edit_mode() {
         let dir = std::env::temp_dir();
         let path = dir.join(format!(
@@ -414,5 +450,21 @@ mod input_tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "Zabc");
         assert!(!app.modified);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn edit_home_end_and_page_keys_move_predictably() {
+        let mut app = App::new(None).unwrap();
+        app.content = (0..30)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        replay(&mut app, &["ctrl+x", "e", "pagedown", "end"]);
+        assert_eq!(app.cursor_line, 10);
+        assert_eq!(app.cursor_col, "line 10".len());
+        assert!(app.scroll > 0);
+        replay(&mut app, &["home", "pageup"]);
+        assert_eq!(app.cursor_line, 0);
+        assert_eq!(app.cursor_col, 0);
     }
 }

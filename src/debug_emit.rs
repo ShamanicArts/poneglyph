@@ -32,6 +32,7 @@ pub struct StateDump {
     pub file_path: Option<String>,
     pub file_browser_cwd: String,
     pub selected_file: usize,
+    pub selected_outline: usize,
     pub content: String,
 }
 
@@ -54,6 +55,7 @@ pub fn state(app: &App) -> StateDump {
         file_path: app.file_path.as_ref().map(|p| p.display().to_string()),
         file_browser_cwd: app.file_browser_cwd.display().to_string(),
         selected_file: app.selected_file,
+        selected_outline: app.selected_outline,
         content: app.content.clone(),
     }
 }
@@ -168,9 +170,14 @@ fn outline_sidebar_lines(app: &App) -> Vec<String> {
     if outline.is_empty() {
         lines.push("No headings found".to_string());
     } else {
-        for h in outline {
+        for (idx, h) in outline.into_iter().enumerate() {
+            let marker = if matches!(app.focus, FocusPane::Outline) && idx == app.selected_outline {
+                "> "
+            } else {
+                "  "
+            };
             lines.push(format!(
-                "{}{}",
+                "{marker}{}{}",
                 "  ".repeat(h.level.saturating_sub(1) as usize),
                 h.text
             ));

@@ -224,24 +224,39 @@ pub fn render_preview_line<'a>(raw: &'a str, theme: &Theme) -> Line<'a> {
         let color = match level {
             1 => theme.heading1,
             2 => theme.heading2,
-            _ => theme.heading3,
+            3 => theme.heading3,
+            4 => theme.heading4,
+            5 => theme.heading5,
+            _ => theme.heading6,
         };
-        return Line::from(vec![Span::styled(
-            title.to_string(),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        )]);
+        return Line::from(vec![
+            Span::styled(
+                format!("{} ", "#".repeat(level as usize)),
+                Style::default().fg(theme.heading_marker),
+            ),
+            Span::styled(
+                title.to_string(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+        ]);
     }
     let trimmed = raw.trim_start();
     if trimmed.starts_with('>') {
         return Line::from(vec![
-            Span::styled("▌ ", Style::default().fg(theme.text_muted)),
+            Span::styled("▌ ", Style::default().fg(theme.quote_marker)),
             Span::styled(
                 trimmed.trim_start_matches('>').trim().to_string(),
                 Style::default()
-                    .fg(theme.text_muted)
+                    .fg(theme.quote)
                     .add_modifier(Modifier::ITALIC),
             ),
         ]);
+    }
+    if is_hr(trimmed) {
+        return Line::from(Span::styled(
+            "─".repeat(trimmed.len().max(12)),
+            Style::default().fg(theme.hr),
+        ));
     }
     if unordered(raw) || ordered(raw) {
         let prefix_len = raw.find(' ').map(|i| i + 1).unwrap_or(0);
@@ -254,7 +269,7 @@ pub fn render_preview_line<'a>(raw: &'a str, theme: &Theme) -> Line<'a> {
     if raw.starts_with("```") {
         return Line::from(Span::styled(
             raw.to_string(),
-            Style::default().fg(theme.code).bg(theme.bg2),
+            Style::default().fg(theme.code).bg(theme.code_bg),
         ));
     }
     render_inline(raw, theme)
@@ -272,38 +287,38 @@ fn render_inline<'a>(raw: &'a str, theme: &Theme) -> Line<'a> {
             InlineKind::Image => Span::styled(
                 format!("![{}]", seg.text),
                 Style::default()
-                    .fg(theme.info)
+                    .fg(theme.image)
                     .add_modifier(Modifier::ITALIC),
             ),
             InlineKind::Link | InlineKind::Autolink => Span::styled(
                 seg.text,
                 Style::default()
-                    .fg(theme.info)
+                    .fg(theme.link)
                     .add_modifier(Modifier::UNDERLINED),
             ),
             InlineKind::Code => {
-                Span::styled(seg.text, Style::default().fg(theme.code).bg(theme.bg2))
+                Span::styled(seg.text, Style::default().fg(theme.code).bg(theme.code_bg))
             }
             InlineKind::Bold => Span::styled(
                 seg.text,
-                Style::default().fg(theme.warn).add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.bold).add_modifier(Modifier::BOLD),
             ),
             InlineKind::Italic => Span::styled(
                 seg.text,
                 Style::default()
-                    .fg(theme.text_muted)
+                    .fg(theme.italic)
                     .add_modifier(Modifier::ITALIC),
             ),
             InlineKind::BoldItalic => Span::styled(
                 seg.text,
                 Style::default()
-                    .fg(theme.warn)
+                    .fg(theme.bold_italic)
                     .add_modifier(Modifier::BOLD | Modifier::ITALIC),
             ),
             InlineKind::Strikethrough => Span::styled(
                 seg.text,
                 Style::default()
-                    .fg(theme.text_muted)
+                    .fg(theme.strikethrough)
                     .add_modifier(Modifier::CROSSED_OUT),
             ),
         })

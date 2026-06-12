@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, List, ListItem, Padding, Paragraph, Wrap},
     Frame,
 };
 
@@ -49,6 +49,7 @@ fn draw_header(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let focus = match app.focus {
         FocusPane::Editor => "editor",
         FocusPane::Files => "files",
+        FocusPane::Outline => "outline",
     };
     let title = app
         .file_path
@@ -56,38 +57,34 @@ fn draw_header(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         .and_then(|p| p.file_name())
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "[No Name]".into());
+    let mode_color = if matches!(app.mode, ViewMode::Preview) {
+        theme.warn
+    } else {
+        theme.success
+    };
     let mut lines = vec![Line::from(vec![
-        Span::styled(" md-editor-rust ", theme.badge(theme.info)),
+        Span::styled(" Markdown Editor ", theme.badge(theme.accent)),
         Span::raw(" "),
-        Span::styled(
-            mode,
-            theme.badge(if matches!(app.mode, ViewMode::Preview) {
-                theme.success
-            } else {
-                theme.warn
-            }),
-        ),
+        Span::styled(format!(" {mode} "), theme.badge(mode_color)),
         Span::raw(" "),
-        Span::styled(focus, theme.dim()),
+        Span::styled(format!(" {focus} "), theme.badge(theme.info)),
         Span::raw("  "),
+        Span::styled("◆ ", Style::default().fg(theme.border_strong)),
         Span::styled(
             title,
             Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
         ),
         if app.modified {
-            Span::styled(" ●", Style::default().fg(theme.warn))
+            Span::styled("  ● unsaved", Style::default().fg(theme.warn))
         } else {
-            Span::raw("")
+            Span::styled("  saved", theme.dim())
         },
     ])];
     lines.push(Line::from(vec![
-        Span::styled(
-            "Ctrl+X",
-            Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" e edit  p preview  f files  o outline  b/r sidebar  u undo  y redo  h help  s save  q quit"),
+        Span::styled(" ^X ", theme.badge(theme.accent)),
+        Span::raw(" e edit  p preview  f files  o outline  b/r sidebar  u/y undo-redo  h help  s save  q quit"),
     ]));
-    frame.render_widget(Paragraph::new(lines).style(theme.panel()), area);
+    frame.render_widget(Paragraph::new(lines).style(theme.elevated()), area);
 }
 
 fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
@@ -151,7 +148,9 @@ fn draw_preview(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             Block::default()
                 .title(" Preview ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.border)),
+                .border_type(BorderType::Rounded)
+                .padding(Padding::horizontal(1))
+                .border_style(Style::default().fg(theme.border_strong)),
         )
         .style(theme.base())
         .wrap(Wrap { trim: false });
@@ -175,10 +174,6 @@ fn draw_editor(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 before,
                 Style::default().fg(theme.text).bg(theme.bg2),
             ));
-            spans.push(Span::styled(
-                "[",
-                Style::default().fg(theme.info).bg(theme.bg2),
-            ));
             let cursor_char = after
                 .chars()
                 .next()
@@ -186,11 +181,10 @@ fn draw_editor(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 .unwrap_or_else(|| " ".into());
             spans.push(Span::styled(
                 cursor_char.clone(),
-                Style::default().fg(theme.text).bg(theme.bg2),
-            ));
-            spans.push(Span::styled(
-                "]",
-                Style::default().fg(theme.info).bg(theme.bg2),
+                Style::default()
+                    .fg(theme.bg)
+                    .bg(theme.info)
+                    .add_modifier(Modifier::BOLD),
             ));
             let rest = after.get(cursor_char.len()..).unwrap_or("");
             spans.push(Span::styled(
@@ -208,7 +202,9 @@ fn draw_editor(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             Block::default()
                 .title(" Editor ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.border)),
+                .border_type(BorderType::Rounded)
+                .padding(Padding::horizontal(1))
+                .border_style(Style::default().fg(theme.border_strong)),
         )
         .style(theme.base());
     frame.render_widget(p, area);
@@ -226,6 +222,7 @@ fn draw_sidebar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 Block::default()
                     .title(" Side ")
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(theme.border)),
             )
             .style(theme.panel());
@@ -272,24 +269,35 @@ fn draw_outline(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     if outline.is_empty() {
         items.push(Line::from(Span::styled("No headings found", theme.dim())));
     } else {
-        for h in outline
+        for (idx, h) in outline
             .into_iter()
             .take(area.height.saturating_sub(10) as usize)
+            .enumerate()
         {
             let color = if h.level == 1 {
-                theme.success
+                theme.heading1
             } else if h.level == 2 {
-                theme.info
+                theme.heading2
             } else {
                 theme.text
             };
+            let selected = matches!(app.focus, FocusPane::Outline) && idx == app.selected_outline;
+            let marker = if selected { "› " } else { "  " };
+            let style = if selected {
+                Style::default()
+                    .fg(theme.bg)
+                    .bg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(color)
+            };
             items.push(Line::from(Span::styled(
                 format!(
-                    "{}{}",
+                    "{marker}{}{}",
                     "  ".repeat(h.level.saturating_sub(1) as usize),
                     h.text
                 ),
-                Style::default().fg(color),
+                style,
             )));
         }
     }
@@ -298,6 +306,8 @@ fn draw_outline(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             Block::default()
                 .title(" Outline (Ctrl+X f for files) ")
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .padding(Padding::horizontal(1))
                 .border_style(Style::default().fg(theme.border_strong)),
         )
         .style(theme.panel())
@@ -333,6 +343,8 @@ fn draw_files(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             Block::default()
                 .title(format!(" Files: {} ", app.file_browser_cwd.display()))
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .padding(Padding::horizontal(1))
                 .border_style(Style::default().fg(theme.border_strong)),
         )
         .style(theme.panel());
@@ -363,6 +375,8 @@ fn draw_help(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
             Block::default()
                 .title(" Help ")
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .padding(Padding::horizontal(1))
                 .border_style(Style::default().fg(theme.warn)),
         )
         .style(theme.panel());
@@ -375,19 +389,24 @@ fn draw_footer(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         ViewMode::Preview => "PREVIEW",
         ViewMode::Edit => "EDIT",
     };
+    let mode_color = if matches!(app.mode, ViewMode::Preview) {
+        theme.warn
+    } else {
+        theme.success
+    };
     let text = Line::from(vec![
-        Span::styled(format!(" {mode} "), theme.badge(theme.info)),
+        Span::styled(format!(" {mode} "), theme.badge(mode_color)),
         Span::raw(format!(
-            " Ln {}, Col {}  ",
+            "  Ln {}, Col {}  ",
             app.cursor_line + 1,
             app.cursor_col + 1
         )),
         Span::styled(
-            format!("{} lines, {} words", stats.lines, stats.words),
+            format!("{} lines · {} words", stats.lines, stats.words),
             theme.dim(),
         ),
-        Span::raw("  "),
+        Span::styled("  │  ", Style::default().fg(theme.border_strong)),
         Span::styled(&app.status, Style::default().fg(theme.text_muted)),
     ]);
-    frame.render_widget(Paragraph::new(text).style(theme.panel()), area);
+    frame.render_widget(Paragraph::new(text).style(theme.elevated()), area);
 }

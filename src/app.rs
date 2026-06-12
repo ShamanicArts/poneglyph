@@ -20,6 +20,7 @@ pub enum ViewMode {
 pub enum FocusPane {
     Editor,
     Files,
+    Outline,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -64,6 +65,7 @@ pub struct App {
     pub should_quit: bool,
     pub file_browser_cwd: PathBuf,
     pub selected_file: usize,
+    pub selected_outline: usize,
     pub undo_stack: Vec<EditSnapshot>,
     pub redo_stack: Vec<EditSnapshot>,
 }
@@ -90,6 +92,7 @@ impl App {
             should_quit: false,
             file_browser_cwd: cwd,
             selected_file: 0,
+            selected_outline: 0,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         };
@@ -116,6 +119,7 @@ impl App {
         self.cursor_col = 0;
         self.scroll = 0;
         self.preview_scroll = 0;
+        self.selected_outline = 0;
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.status = format!("Opened {}", resolved.display());
@@ -258,10 +262,37 @@ impl App {
             .min(max_col);
         self.cursor_line = next_line;
         self.cursor_col = next_col;
-        if self.cursor_line < self.scroll {
+        self.keep_cursor_near_viewport();
+    }
+
+    pub fn move_page(&mut self, delta: isize) {
+        self.move_cursor(delta * 10, 0);
+        if delta > 0 {
+            self.scroll = self.cursor_line.saturating_sub(2);
+        } else {
             self.scroll = self.cursor_line;
         }
-        if self.cursor_line >= self.scroll + 3 { /* render layer adjusts viewport */ }
+    }
+
+    pub fn line_home(&mut self) {
+        self.cursor_col = 0;
+    }
+
+    pub fn line_end(&mut self) {
+        let max_col = self
+            .lines()
+            .get(self.cursor_line)
+            .map(|s| UnicodeWidthStr::width(*s))
+            .unwrap_or(0);
+        self.cursor_col = max_col;
+    }
+
+    fn keep_cursor_near_viewport(&mut self) {
+        if self.cursor_line < self.scroll {
+            self.scroll = self.cursor_line;
+        } else if self.cursor_line >= self.scroll + 12 {
+            self.scroll = self.cursor_line.saturating_sub(11);
+        }
     }
 
     pub fn insert_char(&mut self, ch: char) {
@@ -342,9 +373,13 @@ impl App {
                 self.status = "Files focused".into();
             }
             'o' => {
+                self.sidebar_visible = true;
                 self.sidebar_files = false;
-                self.focus = FocusPane::Editor;
-                self.status = "Sidebar: outline".into();
+                self.focus = FocusPane::Outline;
+                self.selected_outline = self
+                    .selected_outline
+                    .min(self.outline().len().saturating_sub(1));
+                self.status = "Outline focused".into();
             }
             'b' | 'r' => {
                 self.sidebar_collapsed = !self.sidebar_collapsed;
@@ -372,6 +407,20 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    pub fn jump_to_selected_outline(&mut self) {
+        let outline = self.outline();
+        let Some(item) = outline.get(self.selected_outline) else {
+            self.status = "No heading selected".into();
+            return;
+        };
+        self.cursor_line = item.line;
+        self.cursor_col = 0;
+        self.scroll = item.line.saturating_sub(2);
+        self.preview_scroll = item.line.saturating_sub(2);
+        self.focus = FocusPane::Editor;
+        self.status = format!("Jumped to {}", item.text);
     }
 
     pub fn open_selected_file(&mut self) -> Result<()> {
