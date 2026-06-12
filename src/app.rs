@@ -165,7 +165,7 @@ impl App {
         let theme_swatch_style = config
             .theme_swatch_style
             .clone()
-            .unwrap_or(ThemeSwatchStyle::Off);
+            .unwrap_or(ThemeSwatchStyle::Square);
         let theme_swatch_spacing = config.theme_swatch_spacing.unwrap_or(0).min(8);
         let mut app = Self {
             content: default_content(),
