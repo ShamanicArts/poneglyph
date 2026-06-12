@@ -322,10 +322,19 @@ fn draw_files(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         .enumerate()
         .take(area.height.saturating_sub(2) as usize)
         .map(|(i, e)| {
-            let marker = if i == app.selected_file { "> " } else { "  " };
-            let style = if i == app.selected_file {
+            let selected = i == app.selected_file;
+            let marker = if selected { "›" } else { " " };
+            let icon = if e.name == "../" {
+                "↰"
+            } else if e.is_dir {
+                "📁"
+            } else {
+                "󰈙"
+            };
+            let style = if selected {
                 Style::default()
-                    .fg(theme.success)
+                    .fg(theme.bg)
+                    .bg(theme.accent)
                     .add_modifier(Modifier::BOLD)
             } else if e.is_dir {
                 Style::default().fg(theme.info)
@@ -333,7 +342,7 @@ fn draw_files(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 Style::default().fg(theme.text)
             };
             ListItem::new(Line::from(Span::styled(
-                format!("{marker}{}", e.name),
+                format!("{marker} {icon} {}", e.name),
                 style,
             )))
         })
@@ -341,7 +350,13 @@ fn draw_files(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let list = List::new(items)
         .block(
             Block::default()
-                .title(format!(" Files: {} ", app.file_browser_cwd.display()))
+                .title(format!(
+                    " Files: {} ",
+                    compact_path(
+                        &app.file_browser_cwd.display().to_string(),
+                        area.width as usize
+                    )
+                ))
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .padding(Padding::horizontal(1))
@@ -349,6 +364,22 @@ fn draw_files(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         )
         .style(theme.panel());
     frame.render_widget(list, area);
+}
+
+fn compact_path(path: &str, width: usize) -> String {
+    let max = width.saturating_sub(12).max(12);
+    if path.chars().count() <= max {
+        return path.to_string();
+    }
+    let tail: String = path
+        .chars()
+        .rev()
+        .take(max.saturating_sub(1))
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("…{tail}")
 }
 
 fn draw_help(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
@@ -367,7 +398,8 @@ fn draw_help(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
         Line::from("Ctrl+Q      Quit from anywhere"),
         Line::from(""),
         Line::from("Preview: ↑/↓ scroll"),
-        Line::from("Edit: arrows move, type, Enter, Backspace"),
+        Line::from("Edit: arrows/Home/End/Page move, type, Enter, Backspace"),
+        Line::from("Outline: ↑/↓ select, Enter jump, Esc editor"),
         Line::from("Files: ↑/↓ select, Enter open, Esc editor"),
     ];
     let p = Paragraph::new(lines)
