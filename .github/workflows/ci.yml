@@ -37,8 +37,24 @@ jobs:
       - name: Package smoke test
         run: cargo package --locked --no-verify
 
-      - name: Upload Linux binary artifact
+      - name: Create CI archive
+        run: |
+          mkdir -p dist/poneglyph-linux-x86_64
+          cp target/release/poneglyph dist/poneglyph-linux-x86_64/
+          cp README.md LICENSE dist/poneglyph-linux-x86_64/
+          tar -C dist -czf dist/poneglyph-linux-x86_64.tar.gz poneglyph-linux-x86_64
+          sha256sum dist/poneglyph-linux-x86_64.tar.gz > dist/poneglyph-linux-x86_64.tar.gz.sha256
+
+      - name: Upload Linux archive artifact
         uses: actions/upload-artifact@v4
         with:
-          name: poneglyph-linux-x86_64
-          path: target/release/poneglyph
+          name: poneglyph-linux-x86_64-archive
+          path: |
+            dist/poneglyph-linux-x86_64.tar.gz
+            dist/poneglyph-linux-x86_64.tar.gz.sha256
+
+      - name: Upload crates.io package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: poneglyph-crate-package
+          path: target/package/poneglyph-*.crate
