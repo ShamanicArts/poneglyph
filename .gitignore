@@ -1,4 +1,9 @@
+/.direnv
+/.pre-commit-config.yaml
+
 /target
+/results
+*/result
 
 /bench/results/
 /proofs/

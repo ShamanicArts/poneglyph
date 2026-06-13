@@ -4,7 +4,7 @@
 
 ```bash
 git clone https://github.com/ShamanicArts/poneglyph.git
-cd poneglyph
+cd poneglyph || exit
 cargo install --path .
 ```
 
@@ -32,6 +32,50 @@ Once published:
 
 ```bash
 cargo install poneglyph
+```
+
+##Nix (flakes)
+
+Add the zarumet repo as a flake input
+
+```nix
+{
+  inputs = {
+    zarumet = {
+      url = "github:Immelancholy/zarumet";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+}
+```
+
+Add to your package list
+
+```nix
+{ pkgs, inputs, ... }:
+{
+  environment.systemPakcages = [
+    inputs.poneglyph.packages.${pkgs.stdenv.hostPlatform.system}.default
+  ];
+}
+```
+
+Remember to add inputs to specialArgs!
+
+```nix
+nixpkgs.lib.nixosSystem {
+  specialArgs = {
+    inherit
+    inputs;
+  };
+```
+
+Alternatively you can import the home-manager module into home manager and enable the program with.
+
+```nix
+{
+  programs.poneglyph.enable = true;
+}
 ```
 
 ## Configuration
