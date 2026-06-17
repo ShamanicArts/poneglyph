@@ -99,6 +99,7 @@ pub struct App {
     pub boxed_chrome: bool,
     pub theme_swatch_style: ThemeSwatchStyle,
     pub theme_swatch_spacing: usize,
+    pub allow_remote_images: bool,
     pub status: String,
     pub should_quit: bool,
     pub file_browser_cwd: PathBuf,
@@ -170,6 +171,7 @@ impl App {
             .clone()
             .unwrap_or(ThemeSwatchStyle::Square);
         let theme_swatch_spacing = config.theme_swatch_spacing.unwrap_or(0).min(8);
+        let allow_remote_images = config.allow_remote_images.unwrap_or(false);
         let mut app = Self {
             content: default_content(),
             file_path: None,
@@ -194,6 +196,7 @@ impl App {
             boxed_chrome,
             theme_swatch_style,
             theme_swatch_spacing,
+            allow_remote_images,
             status: "Markdown viewer: Ctrl+E edit, Ctrl+V view, Ctrl+F files".into(),
             should_quit: false,
             file_browser_cwd: cwd,
@@ -661,6 +664,7 @@ impl App {
             boxed_chrome: Some(self.boxed_chrome),
             theme_swatch_style: Some(self.theme_swatch_style.clone()),
             theme_swatch_spacing: Some(self.theme_swatch_spacing),
+            allow_remote_images: Some(self.allow_remote_images),
         };
         if let Err(err) = cfg.save() {
             self.status = format!("Config save failed: {err}");

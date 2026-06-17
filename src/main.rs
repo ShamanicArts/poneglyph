@@ -212,7 +212,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
 }
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: App) -> Result<()> {
-    let mut images = image_view::ImageManager::new(image_base_dir(&app));
+    let mut images = image_view::ImageManager::new(image_base_dir(&app), app.allow_remote_images);
     loop {
         images.set_base_dir(image_base_dir(&app));
         terminal.draw(|frame| ui::draw(frame, &app, &app.theme, &mut images))?;

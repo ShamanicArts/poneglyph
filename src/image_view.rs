@@ -21,6 +21,9 @@ use ratatui_image::{
 /// Cap on bytes pulled from a remote image to bound memory and download time
 const MAX_REMOTE_BYTES: u64 = 32 * 1024 * 1024;
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Decode guards so a small compressed file can't expand into a huge allocation
+const MAX_DECODE_DIMENSION: u32 = 16384;
+const MAX_DECODE_ALLOC: u64 = 256 * 1024 * 1024;
 
 struct Loaded {
     image: DynamicImage,
@@ -33,12 +36,14 @@ pub struct ImageManager {
     picker: Picker,
     supported: bool,
     base_dir: PathBuf,
+    // Remote (network) fetches stay off unless the user opts in to avoid leaking requests
+    allow_remote: bool,
     // None marks a target that failed to load so we don't retry every frame
     cache: HashMap<String, Option<Loaded>>,
 }
 
 impl ImageManager {
-    pub fn new(base_dir: PathBuf) -> Self {
+    pub fn new(base_dir: PathBuf, allow_remote: bool) -> Self {
         let (picker, supported) = match Picker::from_query_stdio() {
             Ok(picker) => {
                 let supported = picker.protocol_type() != ProtocolType::Halfblocks;
@@ -50,6 +55,7 @@ impl ImageManager {
             picker,
             supported,
             base_dir,
+            allow_remote,
             cache: HashMap::new(),
         }
     }
@@ -83,6 +89,10 @@ impl ImageManager {
             return None;
         }
         let bytes = if target.contains("://") {
+            // Only reach out to the network when the user has explicitly opted in
+            if !self.allow_remote {
+                return None;
+            }
             fetch_remote(target)?
         } else {
             let path = Path::new(target);
@@ -93,7 +103,16 @@ impl ImageManager {
             };
             fs::read(resolved).ok()?
         };
-        let image = image::load_from_memory(&bytes).ok()?;
+        // Decode behind dimension and allocation limits so a decompression bomb can't OOM us
+        let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
+            .with_guessed_format()
+            .ok()?;
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(MAX_DECODE_DIMENSION);
+        limits.max_image_height = Some(MAX_DECODE_DIMENSION);
+        limits.max_alloc = Some(MAX_DECODE_ALLOC);
+        reader.limits(limits);
+        let image = reader.decode().ok()?;
         let protocol = self.picker.new_resize_protocol(image.clone());
         Some(Loaded { image, protocol })
     }
@@ -129,11 +148,16 @@ fn fetch_remote(url: &str) -> Option<Vec<u8>> {
     }
     let response = ureq::get(url).timeout(REMOTE_TIMEOUT).call().ok()?;
     let mut bytes = Vec::new();
+    // Read one extra byte so an oversized body is detected rather than silently truncated
     response
         .into_reader()
-        .take(MAX_REMOTE_BYTES)
+        .take(MAX_REMOTE_BYTES + 1)
         .read_to_end(&mut bytes)
         .ok()?;
+    if bytes.len() as u64 > MAX_REMOTE_BYTES {
+        // Don't cache a truncated body that would poison later reads
+        return None;
+    }
     if let Some(parent) = cache_path.parent() {
         let _ = fs::create_dir_all(parent);
     }

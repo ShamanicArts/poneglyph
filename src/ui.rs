@@ -346,7 +346,8 @@ fn draw_preview(
         .take(take)
         .cloned()
         .collect();
-    let max_scroll = app.max_preview_scroll().max(1);
+    // Base the percent on the rendered line count which includes expanded image rows
+    let max_scroll = all_lines.len().saturating_sub(1).max(1);
     let percent = ((app.preview_scroll * 100) / max_scroll).min(100);
     let mut p = Paragraph::new(lines)
         .style(theme.base())
@@ -394,15 +395,15 @@ fn overlay_images(
     let content_w = width as u16;
     let content_h = take as u16;
     let supported = images.supported();
+    let view_end = app.preview_scroll + content_h as usize;
     for placement in placements {
-        // Track the image's top row as it scrolls into the viewport
-        if placement.start < app.preview_scroll {
+        // Skip blocks that don't overlap the visible window at all
+        let placement_end = placement.start + placement.rows as usize;
+        if placement_end <= app.preview_scroll || placement.start >= view_end {
             continue;
         }
-        let row = (placement.start - app.preview_scroll) as u16;
-        if row >= content_h {
-            continue;
-        }
+        // Clamp the top row to the viewport for blocks that scrolled in from above
+        let row = placement.start.saturating_sub(app.preview_scroll) as u16;
 
         if !supported {
             render_image_note(
@@ -418,11 +419,23 @@ fn overlay_images(
             continue;
         }
 
+        // Terminal graphics can't clip the source so only draw when the whole block fits
+        let fully_visible = placement.start >= app.preview_scroll;
         match images.fit_size(&placement.target, content_w, content_h) {
             Some(size) => {
-                // Draw only when the whole image fits else leave the fallback
                 let height = size.height.min(placement.rows);
-                if row + height > content_h {
+                if !fully_visible || row + height > content_h {
+                    // Partially scrolled blocks show a hint instead of a blank gap
+                    render_image_note(
+                        frame,
+                        theme,
+                        "image clipped — scroll to view",
+                        content_x,
+                        content_y,
+                        content_w,
+                        row,
+                        content_h,
+                    );
                     continue;
                 }
                 let rect = Rect {

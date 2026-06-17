@@ -12,6 +12,7 @@ pub struct AppConfig {
     pub boxed_chrome: Option<bool>,
     pub theme_swatch_style: Option<ThemeSwatchStyle>,
     pub theme_swatch_spacing: Option<usize>,
+    pub allow_remote_images: Option<bool>,
 }
 
 impl AppConfig {
@@ -59,6 +60,9 @@ impl AppConfig {
                 "themeSwatchSpacing = {}\n",
                 theme_swatch_spacing.min(8)
             ));
+        }
+        if let Some(allow_remote_images) = self.allow_remote_images {
+            out.push_str(&format!("allowRemoteImages = {}\n", allow_remote_images));
         }
         out
     }
@@ -141,6 +145,9 @@ pub fn parse_config(raw: &str) -> AppConfig {
             "themeSwatchSpacing" | "theme_swatch_spacing" => {
                 cfg.theme_swatch_spacing = value.parse::<usize>().ok().map(|n| n.min(8))
             }
+            "allowRemoteImages" | "allow_remote_images" => {
+                cfg.allow_remote_images = parse_bool(value)
+            }
             _ => {}
         }
     }
@@ -190,6 +197,7 @@ mod tests {
             boxed_chrome: Some(true),
             theme_swatch_style: Some(ThemeSwatchStyle::Circle),
             theme_swatch_spacing: Some(2),
+            allow_remote_images: Some(true),
         };
         let toml = cfg.to_toml();
         assert!(toml.contains("theme = \"slate\""));
@@ -197,5 +205,6 @@ mod tests {
         assert!(toml.contains("boxedChrome = true"));
         assert!(toml.contains("themeSwatches = \"circle\""));
         assert!(toml.contains("themeSwatchSpacing = 2"));
+        assert!(toml.contains("allowRemoteImages = true"));
     }
 }
