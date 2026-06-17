@@ -366,6 +366,35 @@ fn table_row(row: &[String], widths: &[usize], style: Style, border_style: Style
     Line::from(spans)
 }
 
+/// Default rows reserved for an image when the caller gives no aspect hint
+pub const IMAGE_PREVIEW_ROWS: usize = 16;
+
+/// Where a standalone image sits in the flattened preview line stream
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImagePlacement {
+    pub target: String,
+    pub start: usize,
+    pub rows: u16,
+}
+
+/// Some alt and target only when the line's sole content is one image
+fn standalone_image(raw: &str) -> Option<(String, String)> {
+    let mut image: Option<(String, String)> = None;
+    for seg in tokenize_inline(raw.trim()) {
+        match seg.kind {
+            InlineKind::Image => {
+                if image.is_some() {
+                    return None;
+                }
+                image = Some((seg.text, seg.target.unwrap_or_default()));
+            }
+            InlineKind::Text if seg.text.trim().is_empty() => {}
+            _ => return None,
+        }
+    }
+    image
+}
+
 pub fn render_preview_document(
     content: &str,
     scroll: usize,
@@ -373,8 +402,21 @@ pub fn render_preview_document(
     width: usize,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
+    let (flat, _) =
+        render_preview_document_full(content, width, theme, &mut |_, _| IMAGE_PREVIEW_ROWS);
+    flat.into_iter().skip(scroll).take(take).collect()
+}
+
+/// Full unscrolled line stream plus image placements for the caller to overlay
+pub fn render_preview_document_full(
+    content: &str,
+    width: usize,
+    theme: &Theme,
+    image_rows: &mut dyn FnMut(&str, usize) -> usize,
+) -> (Vec<Line<'static>>, Vec<ImagePlacement>) {
     let mut in_code = false;
     let mut rendered = Vec::new();
+    let mut marks: Vec<(usize, String, u16)> = Vec::new();
     let raw_lines: Vec<&str> = content.split('\n').collect();
     let mut idx = 0;
     while idx < raw_lines.len() {
@@ -461,17 +503,47 @@ pub fn render_preview_document(
             if level <= 2 {
                 rendered.push(Line::from(""));
             }
+        } else if let Some((alt, target)) = standalone_image(raw) {
+            // Row 0 is the icon fallback shown if graphics can't draw
+            let rows = image_rows(&target, width).max(1);
+            marks.push((rendered.len(), target, rows as u16));
+            rendered.push(Line::from(Span::styled(
+                format!("󰥶 {alt}"),
+                Style::default()
+                    .fg(theme.image)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+            for _ in 1..rows {
+                rendered.push(Line::from(""));
+            }
+            rendered.push(Line::from(Span::styled(
+                format!("  {alt}"),
+                Style::default()
+                    .fg(theme.text_muted)
+                    .add_modifier(Modifier::ITALIC),
+            )));
         } else {
             rendered.push(render_preview_line(raw, theme));
         }
         idx += 1;
     }
-    rendered
-        .into_iter()
-        .flat_map(|line| wrap_styled_line(line, width.max(1)))
-        .skip(scroll)
-        .take(take)
-        .collect()
+
+    // Wrap each line translating image marks into flattened-line space
+    let mut flat: Vec<Line<'static>> = Vec::new();
+    let mut placements = Vec::new();
+    let mut marks = marks.into_iter().peekable();
+    for (rendered_idx, line) in rendered.into_iter().enumerate() {
+        if marks.peek().is_some_and(|(idx, _, _)| *idx == rendered_idx) {
+            let (_, target, rows) = marks.next().unwrap();
+            placements.push(ImagePlacement {
+                target,
+                start: flat.len(),
+                rows,
+            });
+        }
+        flat.extend(wrap_styled_line(line, width.max(1)));
+    }
+    (flat, placements)
 }
 
 pub fn render_preview_line(raw: &str, theme: &Theme) -> Line<'static> {
@@ -930,5 +1002,32 @@ mod tests {
         assert!(kinds.contains(&InlineKind::Bold));
         assert!(kinds.contains(&InlineKind::Italic));
         assert!(kinds.contains(&InlineKind::Strikethrough));
+    }
+
+    #[test]
+    fn standalone_image_reserves_a_block_and_reports_placement() {
+        let theme = Theme::slate();
+        let (lines, placements) = render_preview_document_full(
+            "intro\n\n![a cat](cat.png)\n\nmore",
+            40,
+            &theme,
+            &mut |_, _| IMAGE_PREVIEW_ROWS,
+        );
+        assert_eq!(placements.len(), 1);
+        let placement = &placements[0];
+        assert_eq!(placement.target, "cat.png");
+        assert_eq!(placement.rows as usize, IMAGE_PREVIEW_ROWS);
+        assert!(plain_line(&lines[placement.start]).contains("a cat"));
+        assert!(lines.len() >= placement.start + IMAGE_PREVIEW_ROWS);
+    }
+
+    #[test]
+    fn inline_image_mixed_with_text_is_not_treated_as_a_block() {
+        let theme = Theme::slate();
+        let (_, placements) =
+            render_preview_document_full("see ![a cat](cat.png) here", 40, &theme, &mut |_, _| {
+                IMAGE_PREVIEW_ROWS
+            });
+        assert!(placements.is_empty());
     }
 }

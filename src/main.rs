@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod debug_emit;
+mod image_view;
 mod markdown;
 mod theme;
 mod ui;
@@ -211,8 +212,10 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
 }
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: App) -> Result<()> {
+    let mut images = image_view::ImageManager::new(image_base_dir(&app));
     loop {
-        terminal.draw(|frame| ui::draw(frame, &app, &app.theme))?;
+        images.set_base_dir(image_base_dir(&app));
+        terminal.draw(|frame| ui::draw(frame, &app, &app.theme, &mut images))?;
         if app.should_quit {
             return Ok(());
         }
@@ -224,6 +227,15 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: App) 
             }
         }
     }
+}
+
+fn image_base_dir(app: &App) -> PathBuf {
+    app.file_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn parse_script_key(raw: &str) -> Result<KeyEvent> {
