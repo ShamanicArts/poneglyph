@@ -11,14 +11,15 @@ use crate::{
         selected_window, theme_options, App, CursorStyle, FocusPane, LeaderMode, ThemeSwatchStyle,
         ViewMode,
     },
-    markdown::{render_editor_line, render_preview_document},
+    image_view::ImageManager,
+    markdown::{render_editor_line, render_preview_document_full},
     theme::Theme,
 };
 
 const SIDEBAR_COLLAPSED_W: u16 = 6;
 const SIDEBAR_COLLAPSED_H: u16 = 3;
 
-pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
+pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme, images: &mut ImageManager) {
     let area = frame.area();
     let root = Layout::default()
         .direction(Direction::Vertical)
@@ -29,7 +30,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         ])
         .split(area);
     draw_header(frame, app, theme, root[0]);
-    draw_body(frame, app, theme, root[1]);
+    draw_body(frame, app, theme, root[1], images);
     draw_footer(frame, app, theme, root[2]);
 }
 
@@ -202,14 +203,20 @@ fn header_action_line<'a>(app: &App, theme: &Theme) -> Line<'a> {
     Line::from(spans)
 }
 
-fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+fn draw_body(
+    frame: &mut Frame<'_>,
+    app: &App,
+    theme: &Theme,
+    area: Rect,
+    images: &mut ImageManager,
+) {
     if area.width < 2 || area.height < 1 {
         return;
     }
     let use_vertical = area.width < 90;
     let show_sidebar = app.sidebar_visible && area.height >= 8;
     if !show_sidebar {
-        draw_main(frame, app, theme, area);
+        draw_main(frame, app, theme, area, images);
         return;
     }
     if use_vertical {
@@ -225,7 +232,7 @@ fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(1), Constraint::Length(side_h)])
                 .split(area);
-            draw_main(frame, app, theme, chunks[0]);
+            draw_main(frame, app, theme, chunks[0], images);
             draw_sidebar(frame, app, theme, chunks[1]);
         } else {
             let chunks = Layout::default()
@@ -236,7 +243,7 @@ fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                     Constraint::Length(side_h),
                 ])
                 .split(area);
-            draw_main(frame, app, theme, chunks[0]);
+            draw_main(frame, app, theme, chunks[0], images);
             draw_horizontal_separator(frame, theme, chunks[1]);
             draw_sidebar(frame, app, theme, chunks[2]);
         }
@@ -253,7 +260,7 @@ fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Min(1), Constraint::Length(side_w)])
                 .split(area);
-            draw_main(frame, app, theme, chunks[0]);
+            draw_main(frame, app, theme, chunks[0], images);
             draw_sidebar(frame, app, theme, chunks[1]);
         } else {
             let chunks = Layout::default()
@@ -264,7 +271,7 @@ fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                     Constraint::Length(side_w),
                 ])
                 .split(area);
-            draw_main(frame, app, theme, chunks[0]);
+            draw_main(frame, app, theme, chunks[0], images);
             draw_vertical_separator(frame, theme, chunks[1]);
             draw_sidebar(frame, app, theme, chunks[2]);
         }
@@ -290,27 +297,57 @@ fn draw_horizontal_separator(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
     );
 }
 
-fn draw_main(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+fn draw_main(
+    frame: &mut Frame<'_>,
+    app: &App,
+    theme: &Theme,
+    area: Rect,
+    images: &mut ImageManager,
+) {
     match app.mode {
-        ViewMode::Preview => draw_preview(frame, app, theme, area),
+        ViewMode::Preview => draw_preview(frame, app, theme, area, images),
         ViewMode::Edit => draw_editor(frame, app, theme, area),
     }
 }
 
-fn draw_preview(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+fn draw_preview(
+    frame: &mut Frame<'_>,
+    app: &App,
+    theme: &Theme,
+    area: Rect,
+    images: &mut ImageManager,
+) {
     let render_area = smooth_content_area(app, area);
-    let lines: Vec<Line> = render_preview_document(
-        &app.content,
-        app.preview_scroll,
-        render_area
-            .height
-            .saturating_sub(if app.boxed_chrome { 2 } else { 0 }) as usize,
-        render_area
-            .width
-            .saturating_sub(if app.boxed_chrome { 4 } else { 1 }) as usize,
-        theme,
-    );
-    let max_scroll = app.max_preview_scroll().max(1);
+    let take = render_area
+        .height
+        .saturating_sub(if app.boxed_chrome { 2 } else { 0 }) as usize;
+    let width = render_area
+        .width
+        .saturating_sub(if app.boxed_chrome { 4 } else { 1 }) as usize;
+    // Size each image block to its aspect ratio capped to the viewport so it never needs cropping
+    let supported = images.supported();
+    let max_rows = (take as u16).max(1);
+    let avail = width as u16;
+    let (all_lines, placements) = {
+        let mut image_rows = |target: &str, _w: usize| -> usize {
+            if !supported {
+                return 2;
+            }
+            match images.fit_size(target, avail, max_rows) {
+                Some(size) => size.height as usize,
+                None => 2,
+            }
+        };
+        render_preview_document_full(&app.content, width, theme, &mut image_rows)
+    };
+    let lines: Vec<Line> = all_lines
+        .iter()
+        .skip(app.preview_scroll)
+        .take(take)
+        .cloned()
+        .collect();
+    // Base the percent on the rendered line count which includes expanded image rows
+    let max_scroll = all_lines.len().saturating_sub(1).max(1);
     let percent = ((app.preview_scroll * 100) / max_scroll).min(100);
     let mut p = Paragraph::new(lines)
         .style(theme.base())
@@ -326,6 +363,133 @@ fn draw_preview(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         );
     }
     frame.render_widget(p, render_area);
+
+    overlay_images(
+        frame,
+        app,
+        theme,
+        images,
+        render_area,
+        take,
+        width,
+        &placements,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn overlay_images(
+    frame: &mut Frame<'_>,
+    app: &App,
+    theme: &Theme,
+    images: &mut ImageManager,
+    render_area: Rect,
+    take: usize,
+    width: usize,
+    placements: &[crate::markdown::ImagePlacement],
+) {
+    if width == 0 || take == 0 {
+        return;
+    }
+    let content_x = render_area.x + if app.boxed_chrome { 2 } else { 0 };
+    let content_y = render_area.y + if app.boxed_chrome { 1 } else { 0 };
+    let content_w = width as u16;
+    let content_h = take as u16;
+    let supported = images.supported();
+    let view_end = app.preview_scroll + content_h as usize;
+    for placement in placements {
+        // Skip blocks that don't overlap the visible window at all
+        let placement_end = placement.start + placement.rows as usize;
+        if placement_end <= app.preview_scroll || placement.start >= view_end {
+            continue;
+        }
+        // Clamp the top row to the viewport for blocks that scrolled in from above
+        let row = placement.start.saturating_sub(app.preview_scroll) as u16;
+
+        if !supported {
+            render_image_note(
+                frame,
+                theme,
+                "image preview not supported in this terminal",
+                content_x,
+                content_y,
+                content_w,
+                row,
+                content_h,
+            );
+            continue;
+        }
+
+        // Terminal graphics can't clip the source so only draw when the whole block fits
+        let fully_visible = placement.start >= app.preview_scroll;
+        match images.fit_size(&placement.target, content_w, content_h) {
+            Some(size) => {
+                let height = size.height.min(placement.rows);
+                if !fully_visible || row + height > content_h {
+                    // Partially scrolled blocks show a hint instead of a blank gap
+                    render_image_note(
+                        frame,
+                        theme,
+                        "image clipped — scroll to view",
+                        content_x,
+                        content_y,
+                        content_w,
+                        row,
+                        content_h,
+                    );
+                    continue;
+                }
+                let rect = Rect {
+                    x: content_x,
+                    y: content_y + row,
+                    width: size.width.min(content_w),
+                    height,
+                };
+                images.render(frame, &placement.target, rect);
+            }
+            None => render_image_note(
+                frame,
+                theme,
+                "image unavailable",
+                content_x,
+                content_y,
+                content_w,
+                row,
+                content_h,
+            ),
+        }
+    }
+}
+
+/// One-line hint drawn just below an image's fallback icon row
+#[allow(clippy::too_many_arguments)]
+fn render_image_note(
+    frame: &mut Frame<'_>,
+    theme: &Theme,
+    text: &str,
+    content_x: u16,
+    content_y: u16,
+    content_w: u16,
+    row: u16,
+    content_h: u16,
+) {
+    let note_row = row + 1;
+    if note_row >= content_h {
+        return;
+    }
+    let rect = Rect {
+        x: content_x,
+        y: content_y + note_row,
+        width: content_w,
+        height: 1,
+    };
+    let note = Paragraph::new(Line::from(Span::styled(
+        format!("  {text}"),
+        Style::default()
+            .fg(theme.warn)
+            .add_modifier(Modifier::ITALIC),
+    )))
+    .style(theme.base());
+    frame.render_widget(note, rect);
 }
 
 fn smooth_content_area(app: &App, area: Rect) -> Rect {

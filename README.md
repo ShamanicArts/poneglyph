@@ -23,6 +23,7 @@ Current local release build:
 - Boxed or smooth chrome.
 - Configurable cursor style and theme swatches.
 - Rich preview rendering for headings, blockquotes, nested lists, code blocks, tables, links, and images.
+- Inline image rendering from markdown via [ratatui-image](https://github.com/ratatui/ratatui-image), using the terminal's native graphics protocol (kitty/sixel/iTerm2) with an aspect-correct fit; terminals without graphics support show a short hint instead.
 - Save, undo/redo, Delete/Backspace editing, and file opening.
 - Debug commands for fixtures, snapshots, and automation.
 
